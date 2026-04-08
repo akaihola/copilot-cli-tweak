@@ -136,19 +136,26 @@ for f in "${unique[@]}"; do
     const r1patched = /CIRCLE_HALF,iconColor:\"gray\",descriptionColor:\"gray\"\},description:\w+\.default\.createElement\(Q,\{italic:!0,color:\"gray\"\}/.test(code);
     const r1original = /CIRCLE_HALF,iconColor:(\w+)\.textTertiary,descriptionColor:\1\.textTertiary\},description:\w+\.default\.createElement\(Q,\{italic:!0,(dimColor:!0,)?color:\1\.textTertiary\}/.test(code);
 
-    // Patch 2: user prompts → white text on dark gray background.
-    // Matches the message-display component (dyt/equivalent) across versions.
+    // Patch 2: user messages in session-history viewer (dyt component) →
+    // white text on dark gray background.
     // userOriginalRe uses (?![\"']) to match only when the ternary uses a variable
     // (original form), not a string literal like \"white\" (patched form).
     const r2patched = /backgroundColor:c\?\"gray\":void 0\}/.test(code);
     const r2original = /c=t\.role===[\"']user[\"'],(\w+)=c\?(?![\"'])(\w+):(\w+)/.test(code);
 
-    // r1applicable/r2applicable: true if the patch is relevant for this file
+    // Patch 3: user messages in main chat view (Gj component) →
+    // white text on dark gray background.
+    // Targets the if(t==="user") branch that builds the variant for the Oo renderer.
+    const r3patched = /if\(t===[\"']user[\"']\)\{return\{icon:\w+\.CHEVRON_RIGHT,iconColor:\"white\",descriptionColor:\"white\",backgroundColor:\"gray\"\}/.test(code);
+    const r3original = /if\(t===[\"']user[\"']\)\{let \w+=\w+\(\w+\),\w+=\w+===[\"']plan[\"']\?\w+:\w+===[\"']autopilot[\"']\?\w+:\w+;return\{icon:\w+\.CHEVRON_RIGHT,iconColor:\w+\?\?[\"'][\"'],descriptionColor:\w+,backgroundColor:\w+\}/.test(code);
+
+    // r1applicable/r2applicable/r3applicable: true if the patch is relevant for this file
     // (either already applied or the original pattern is present).
     const r1applicable = r1patched || r1original;
     const r2applicable = r2patched || r2original;
+    const r3applicable = r3patched || r3original;
 
-    if (!r1applicable && !r2applicable) {
+    if (!r1applicable && !r2applicable && !r3applicable) {
       console.log('skip-no-match');
       return;
     }
@@ -156,7 +163,8 @@ for f in "${unique[@]}"; do
     if (revert) {
       // already-reverted: every applicable patch is in its original state
       if ((!r1applicable || (r1original && !r1patched)) &&
-          (!r2applicable || (r2original && !r2patched))) {
+          (!r2applicable || (r2original && !r2patched)) &&
+          (!r3applicable || (r3original && !r3patched))) {
         console.log('skip-already-reverted');
         return;
       }
@@ -176,7 +184,7 @@ for f in "${unique[@]}"; do
         });
       }
 
-      // Revert patch 2: user prompt styling
+      // Revert patch 2: session-history viewer user styling
       if (r2patched) {
         // 1. Restore textPrimary color variable (find it from surrounding context)
         code = code.replace(
@@ -205,9 +213,29 @@ for f in "${unique[@]}"; do
           '\$1\$2'
         );
       }
+
+      // Revert patch 3: main chat user variant → original theme colors
+      if (r3patched) {
+        code = code.replace(
+          /if\(t===[\"']user[\"']\)\{return\{icon:(\w+)\.CHEVRON_RIGHT,iconColor:\"white\",descriptionColor:\"white\",backgroundColor:\"gray\"\}/,
+          (m, icons) => {
+            const idx = code.indexOf(m);
+            const before = code.substring(Math.max(0, idx - 600), idx);
+            const themeMatch = before.match(/let\{[^}]*textPrimary:(\w+),[^}]*backgroundSecondary:(\w+)\}=gt\(\)/);
+            const agentFnMatch = before.match(/(\w+)=(\w+)=>[^;]+===[\"']autopilot[\"'][^;]+;/);
+            let tp = themeMatch ? themeMatch[1] : 'I';
+            let bs = themeMatch ? themeMatch[2] : 'S';
+            let fn = agentFnMatch ? agentFnMatch[1] : 'D';
+            let planVar = 'h', autoVar = 'g';
+            const softMatch = before.match(/modePlanSoft:(\w+),modeAutopilotSoft:(\w+)/);
+            if (softMatch) { planVar = softMatch[1]; autoVar = softMatch[2]; }
+            return 'if(t===\"user\"){let te=' + fn + '(' + tp + '),ae=o===\"plan\"?' + planVar + ':o===\"autopilot\"?' + autoVar + ':' + tp + ';return{icon:' + icons + '.CHEVRON_RIGHT,iconColor:te??\"\",descriptionColor:ae,backgroundColor:' + bs + '}';
+          }
+        );
+      }
     } else {
       // already-patched: every applicable patch has been applied
-      if ((!r1applicable || r1patched) && (!r2applicable || r2patched)) {
+      if ((!r1applicable || r1patched) && (!r2applicable || r2patched) && (!r3applicable || r3patched)) {
         console.log('skip-already-patched');
         return;
       }
@@ -245,6 +273,15 @@ for f in "${unique[@]}"; do
           (m) => m.replace(/\{wrap:[\"']wrap[\"']\}/, '{wrap:\"wrap\",color:f}')
         );
       }
+
+      // Apply patch 3: main chat view user variant → white on dark gray
+      if (!r3patched && r3original) {
+        code = code.replace(
+          /if\(t===[\"']user[\"']\)\{let (\w+)=(\w+)\((\w+)\),(\w+)=\w+===[\"']plan[\"']\?(\w+):\w+===[\"']autopilot[\"']\?(\w+):\w+;return\{icon:(\w+)\.CHEVRON_RIGHT,iconColor:\w+\?\?[\"'][\"'],descriptionColor:\w+,backgroundColor:\w+\}/,
+          (m, _te, _D, _I, _ae, _h, _g, icons) =>
+            'if(t===\"user\"){return{icon:' + icons + '.CHEVRON_RIGHT,iconColor:\"white\",descriptionColor:\"white\",backgroundColor:\"gray\"}'
+        );
+      }
     }
 
     if (process.argv[3] === 'true') {
@@ -254,17 +291,18 @@ for f in "${unique[@]}"; do
 
     fs.writeFileSync(path, code);
 
-    // Verify both patches are in the expected state
+    // Verify all patches are in the expected state
     const verify = fs.readFileSync(path, 'utf8');
-    const v1applicable = r1original || r1patched;
-    const v2applicable = r2original || r2patched;
-    const v1ok = !v1applicable || (revert
+    const v1ok = !r1applicable || (revert
       ? /CIRCLE_HALF,iconColor:\w+\.textTertiary/.test(verify)
       : /CIRCLE_HALF,iconColor:\"gray\"/.test(verify));
-    const v2ok = !v2applicable || (revert
+    const v2ok = !r2applicable || (revert
       ? !/backgroundColor:c\?\"gray\":void 0\}/.test(verify)
       : /backgroundColor:c\?\"gray\":void 0\}/.test(verify));
-    console.log((v1ok && v2ok) ? 'ok' : 'failed');
+    const v3ok = !r3applicable || (revert
+      ? /if\(t===[\"']user[\"']\)\{let \w+=\w+\(\w+\)/.test(verify)
+      : /if\(t===[\"']user[\"']\)\{return\{icon:\w+\.CHEVRON_RIGHT,iconColor:\"white\"/.test(verify));
+    console.log((v1ok && v2ok && v3ok) ? 'ok' : 'failed');
     })();
   " "$f" "$REVERT" "$DRY_RUN")
 
