@@ -6,6 +6,8 @@ set -euo pipefail
 #      matching code comment color.
 #   2. Render user prompts in session history as white text on a dark gray
 #      background, visually distinguishing them from assistant responses.
+#   3. Render user prompts in the main chat view as white text on a dark gray
+#      background, so your messages stand out during the current session.
 #
 # Idempotent: safe to run multiple times. Skips files already patched.
 #
@@ -22,10 +24,12 @@ for arg in "$@"; do
     -h|--help)
       echo "Usage: copilot-cli-tweak.sh [--dry-run] [--revert] [--preview]"
       echo ""
-      echo "Patches Copilot CLI's app.js with two visual improvements:"
+      echo "Patches Copilot CLI's app.js with three visual improvements:"
       echo "  1. Reasoning/thinking text rendered as dark gray (less distracting)."
       echo "  2. User prompts in session history rendered as white text on a dark"
       echo "     gray background (visually distinct from assistant responses)."
+      echo "  3. User prompts in main chat rendered as white text on a dark gray"
+      echo "     background (your messages stand out during the current session)."
       echo ""
       echo "  --dry-run  Show what would be patched without changing files"
       echo "  --revert   Remove the patch (restore original rendering)"
@@ -66,6 +70,12 @@ if $PREVIEW; then
   echo ""
   printf "  Before: %s\n" "$prompt"
   printf "  After:  ${BGDARKGRAY}${WHITE}%s${RST}\n" "$prompt"
+  echo ""
+  echo "  Patch 3: User prompts in main chat"
+  echo "  ────────────────────────────────────"
+  echo ""
+  printf "  Before: ❯ %s\n" "$prompt"
+  printf "  After:  ${BGDARKGRAY}${WHITE}❯ %s${RST}\n" "$prompt"
   echo ""
   exit 0
 fi
