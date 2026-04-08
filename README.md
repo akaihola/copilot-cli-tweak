@@ -1,15 +1,25 @@
 # copilot-cli-tweak
 
-Patches [GitHub Copilot CLI](https://github.com/github/copilot-cli) to render
-thinking/reasoning text as dark gray — the same color used for code comments —
-instead of the default light gray. Makes thinking output less visually intrusive
-while keeping it readable.
+Patches [GitHub Copilot CLI](https://github.com/github/copilot-cli) with two
+visual improvements to its session history rendering:
+
+1. **Thinking/reasoning text** — rendered as dark gray (the same color used for
+   code comments) instead of the default light gray. Makes thinking output less
+   visually intrusive while keeping it readable.
+
+2. **User prompts** — rendered as white text on a dark gray background, making
+   them visually distinct from assistant responses in the session history.
 
 ## What it does
 
-Changes the `iconColor`, `descriptionColor`, and text `color` of the reasoning
-component in Copilot CLI's bundled `app.js` from `textTertiary` (light gray) to
-`"gray"` (ANSI bright-black / `\e[90m`).
+**Reasoning text:** Changes the `iconColor`, `descriptionColor`, and text
+`color` of the reasoning component in Copilot CLI's bundled `app.js` from
+`textTertiary` (light gray) to `"gray"` (ANSI bright-black / `\e[90m`).
+
+**User prompts:** In the session-history message display component, changes the
+user message color to `"white"`, adds a `backgroundColor` of `"gray"` (dark
+gray) to the message box, and threads the color through to the text renderer so
+body text is also explicitly white.
 
 ## Usage
 
@@ -33,11 +43,11 @@ Restart Copilot CLI after patching for changes to take effect.
 
 The script finds all `app.js` files in Copilot CLI's auto-update cache
 (`~/.copilot/pkg/universal/*/app.js`) and npm global install
-(`$(npm root -g)/@github/copilot/app.js`), then uses a regex to locate the
-reasoning component's `createElement` call and rewrites the color arguments.
+(`$(npm root -g)/@github/copilot/app.js`), then applies two patches using
+regexes that locate the relevant `createElement` calls and rewrite color props.
 
-The regex is version-agnostic — it handles the different minified variable names
-used across Copilot CLI releases.
+Both regexes are version-agnostic — they handle the different minified variable
+names used across Copilot CLI releases.
 
 ## Caveats
 

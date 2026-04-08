@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# copilot-cli-tweak — Patch Copilot CLI to render thinking/reasoning text
-# as dark gray (ANSI "gray" / bright-black), matching code comment color.
+# copilot-cli-tweak — Patch Copilot CLI to:
+#   1. Render thinking/reasoning text as dark gray (ANSI "gray" / bright-black),
+#      matching code comment color.
+#   2. Render user prompts in session history as white text on a dark gray
+#      background, visually distinguishing them from assistant responses.
 #
 # Idempotent: safe to run multiple times. Skips files already patched.
 #
@@ -19,8 +22,10 @@ for arg in "$@"; do
     -h|--help)
       echo "Usage: copilot-cli-tweak.sh [--dry-run] [--revert] [--preview]"
       echo ""
-      echo "Patches Copilot CLI's app.js to render reasoning/thinking text"
-      echo "as dark gray, matching the color used for code comments."
+      echo "Patches Copilot CLI's app.js with two visual improvements:"
+      echo "  1. Reasoning/thinking text rendered as dark gray (less distracting)."
+      echo "  2. User prompts in session history rendered as white text on a dark"
+      echo "     gray background (visually distinct from assistant responses)."
       echo ""
       echo "  --dry-run  Show what would be patched without changing files"
       echo "  --revert   Remove the patch (restore original rendering)"
@@ -38,12 +43,15 @@ if $PREVIEW; then
   DIM='\033[2m'
   TERT='\033[37m'
   GRAY='\033[90m'
+  WHITE='\033[97m'
+  BGDARKGRAY='\033[100m'
 
   sample="The user wants reasoning text to be darker so it's less distracting..."
+  prompt="Hello! Can you help me refactor this function?"
 
   echo ""
-  echo "  Copilot CLI thinking/reasoning text preview"
-  echo "  ────────────────────────────────────────────"
+  echo "  Patch 1: Thinking/reasoning text"
+  echo "  ──────────────────────────────────"
   echo ""
   printf "  Before (original):   ${ITALIC}${TERT}%s${RST}\n" "$sample"
   printf "  Before (+ dimColor): ${ITALIC}${DIM}${TERT}%s${RST}\n" "$sample"
@@ -52,6 +60,12 @@ if $PREVIEW; then
   echo "  For reference:"
   printf "  Code comment:        ${GRAY}// this is a code comment${RST}\n"
   printf "  Normal text:         %s\n" "This is normal text."
+  echo ""
+  echo "  Patch 2: User prompts in session history"
+  echo "  ──────────────────────────────────────────"
+  echo ""
+  printf "  Before: %s\n" "$prompt"
+  printf "  After:  ${BGDARKGRAY}${WHITE}%s${RST}\n" "$prompt"
   echo ""
   exit 0
 fi
@@ -116,24 +130,41 @@ for f in "${unique[@]}"; do
     const revert = process.argv[2] === 'true';
     let code = fs.readFileSync(path, 'utf8');
 
-    // Regex matches the reasoning createElement across versions.
+    // Patch 1: reasoning text → gray.
     // Variable names (fwe, H1e, etc.) differ per version, but structure is stable.
     // The CIRCLE_HALF icon is unique to the reasoning component.
-    const patchedRe = /CIRCLE_HALF,iconColor:\"gray\",descriptionColor:\"gray\"\},description:\w+\.default\.createElement\(Q,\{italic:!0,color:\"gray\"\}/;
-    const originalRe = /CIRCLE_HALF,iconColor:(\w+)\.textTertiary,descriptionColor:\1\.textTertiary\},description:\w+\.default\.createElement\(Q,\{italic:!0,(dimColor:!0,)?color:\1\.textTertiary\}/;
+    const r1patched = /CIRCLE_HALF,iconColor:\"gray\",descriptionColor:\"gray\"\},description:\w+\.default\.createElement\(Q,\{italic:!0,color:\"gray\"\}/.test(code);
+    const r1original = /CIRCLE_HALF,iconColor:(\w+)\.textTertiary,descriptionColor:\1\.textTertiary\},description:\w+\.default\.createElement\(Q,\{italic:!0,(dimColor:!0,)?color:\1\.textTertiary\}/.test(code);
+
+    // Patch 2: user prompts → white text on dark gray background.
+    // Matches the message-display component (dyt/equivalent) across versions.
+    // userOriginalRe uses (?![\"']) to match only when the ternary uses a variable
+    // (original form), not a string literal like \"white\" (patched form).
+    const r2patched = /backgroundColor:c\?\"gray\":void 0\}/.test(code);
+    const r2original = /c=t\.role===[\"']user[\"'],(\w+)=c\?(?![\"'])(\w+):(\w+)/.test(code);
+
+    // r1applicable/r2applicable: true if the patch is relevant for this file
+    // (either already applied or the original pattern is present).
+    const r1applicable = r1patched || r1original;
+    const r2applicable = r2patched || r2original;
+
+    if (!r1applicable && !r2applicable) {
+      console.log('skip-no-match');
+      return;
+    }
 
     if (revert) {
-      if (originalRe.test(code) && !patchedRe.test(code)) {
+      // already-reverted: every applicable patch is in its original state
+      if ((!r1applicable || (r1original && !r1patched)) &&
+          (!r2applicable || (r2original && !r2patched))) {
         console.log('skip-already-reverted');
         return;
       }
-      if (!patchedRe.test(code)) {
-        console.log('skip-no-match');
-        return;
-      }
-      code = code.replace(
-        patchedRe,
-        (m) => {
+
+      // Revert patch 1: reasoning → gray
+      if (r1patched) {
+        const patchedRe = /CIRCLE_HALF,iconColor:\"gray\",descriptionColor:\"gray\"\},description:\w+\.default\.createElement\(Q,\{italic:!0,color:\"gray\"\}/;
+        code = code.replace(patchedRe, (m) => {
           const idx = code.indexOf(m);
           const before = code.substring(Math.max(0, idx - 200), idx);
           const varMatch = before.match(/let (\w+)=gt\(\)/);
@@ -142,25 +173,78 @@ for f in "${unique[@]}"; do
           const lib = libMatch ? libMatch[1] : 'fwe';
           return 'CIRCLE_HALF,iconColor:' + v + '.textTertiary,descriptionColor:' + v + '.textTertiary},description:' +
             lib + '.default.createElement(Q,{italic:!0,color:' + v + '.textTertiary}';
-        }
-      );
+        });
+      }
+
+      // Revert patch 2: user prompt styling
+      if (r2patched) {
+        // 1. Restore textPrimary color variable (find it from surrounding context)
+        code = code.replace(
+          /c=t\.role===[\"']user[\"'],(\w+)=c\?\"white\":(\w+)/,
+          (m, u, ts) => {
+            const idx = code.indexOf(m);
+            const before = code.substring(Math.max(0, idx - 400), idx);
+            const tpMatch = before.match(/textPrimary:(\w+),/);
+            const tp = tpMatch ? tpMatch[1] : ts;
+            return 'c=t.role===\"user\",' + u + '=c?' + tp + ':' + ts;
+          }
+        );
+        // 2. Remove backgroundColor from the message box
+        code = code.replace(
+          /(borderStyle:[\"']round[\"'],borderColor:c\?\w+:\w+,paddingX:1),backgroundColor:c\?\"gray\":void 0(\})/,
+          '\$1\$2'
+        );
+        // 3. Remove textColor from block renderer destructuring
+        code = code.replace(
+          /},(\w+)=\(\{block:(\w+),renderMarkdown:(\w+),textColor:\w+\}\)=>/,
+          (m, renderer, block, rm) => '},' + renderer + '=({block:' + block + ',renderMarkdown:' + rm + '})=>'
+        );
+        // 4. Remove color prop from the text case in the block renderer
+        code = code.replace(
+          /(case[\"']text[\"']:return \w+\.default\.createElement\(\w+,\{wrap:[\"']wrap[\"']),color:\w+(\})/,
+          '\$1\$2'
+        );
+      }
     } else {
-      if (patchedRe.test(code)) {
+      // already-patched: every applicable patch has been applied
+      if ((!r1applicable || r1patched) && (!r2applicable || r2patched)) {
         console.log('skip-already-patched');
         return;
       }
-      if (!originalRe.test(code)) {
-        console.log('skip-no-match');
-        return;
-      }
-      code = code.replace(
-        originalRe,
-        (m) => {
+
+      // Apply patch 1: reasoning → gray
+      if (!r1patched && r1original) {
+        const originalRe = /CIRCLE_HALF,iconColor:(\w+)\.textTertiary,descriptionColor:\1\.textTertiary\},description:\w+\.default\.createElement\(Q,\{italic:!0,(dimColor:!0,)?color:\1\.textTertiary\}/;
+        code = code.replace(originalRe, (m) => {
           const libMatch = m.match(/description:(\w+)\.default/);
           const lib = libMatch ? libMatch[1] : 'fwe';
           return 'CIRCLE_HALF,iconColor:\"gray\",descriptionColor:\"gray\"},description:' + lib + '.default.createElement(Q,{italic:!0,color:\"gray\"}';
-        }
-      );
+        });
+      }
+
+      // Apply patch 2: user prompt → white on dark gray background
+      if (!r2patched && r2original) {
+        // 1. Change user color variable to \"white\" (was textPrimary variable)
+        code = code.replace(
+          /c=t\.role===[\"']user[\"'],(\w+)=c\?(?![\"'])(\w+):(\w+)/,
+          (m, u, tp, ts) => 'c=t.role===\"user\",' + u + '=c?\"white\":' + ts
+        );
+        // 2. Add dark gray background to the user message box
+        code = code.replace(
+          /(borderStyle:[\"']round[\"'],borderColor:c\?\w+:\w+,paddingX:1)(\})/,
+          '\$1,backgroundColor:c?\"gray\":void 0}'
+        );
+        // 3. Add textColor parameter to the block renderer component
+        code = code.replace(
+          /},(\w+)=\(\{block:(\w+),renderMarkdown:(\w+)\}\)=>/,
+          (m, renderer, block, rm) => '},' + renderer + '=({block:' + block + ',renderMarkdown:' + rm + ',textColor:f})=>'
+        );
+        // 4. Use textColor (f) for the text content in the block renderer
+        code = code.replace(
+          /(case[\"']text[\"']:return \w+\.default\.createElement\(\w+,\{wrap:[\"']wrap[\"']\})/,
+          (m) => m.replace(/\{wrap:[\"']wrap[\"']\}/, '{wrap:\"wrap\",color:f}')
+        );
+      }
     }
 
     if (process.argv[3] === 'true') {
@@ -170,13 +254,17 @@ for f in "${unique[@]}"; do
 
     fs.writeFileSync(path, code);
 
-    // Verify
+    // Verify both patches are in the expected state
     const verify = fs.readFileSync(path, 'utf8');
-    if (revert ? originalRe.test(verify) : patchedRe.test(verify)) {
-      console.log('ok');
-    } else {
-      console.log('failed');
-    }
+    const v1applicable = r1original || r1patched;
+    const v2applicable = r2original || r2patched;
+    const v1ok = !v1applicable || (revert
+      ? /CIRCLE_HALF,iconColor:\w+\.textTertiary/.test(verify)
+      : /CIRCLE_HALF,iconColor:\"gray\"/.test(verify));
+    const v2ok = !v2applicable || (revert
+      ? !/backgroundColor:c\?\"gray\":void 0\}/.test(verify)
+      : /backgroundColor:c\?\"gray\":void 0\}/.test(verify));
+    console.log((v1ok && v2ok) ? 'ok' : 'failed');
     })();
   " "$f" "$REVERT" "$DRY_RUN")
 
@@ -208,5 +296,5 @@ if $DRY_RUN; then
   echo "Dry run: $patched file(s) would be patched, $skipped skipped."
 else
   echo "Done: $patched file(s) patched, $skipped skipped."
-  [ $patched -gt 0 ] && echo "Restart Copilot CLI for changes to take effect."
+  [ $patched -gt 0 ] && echo "Restart Copilot CLI for changes to take effect." || true
 fi
