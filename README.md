@@ -1,5 +1,7 @@
 # copilot-cli-tweak
 
+> This is a prototype developed using AI coding agents and not intended for production use.
+
 Patches [GitHub Copilot CLI](https://github.com/github/copilot-cli) with three
 visual improvements:
 
